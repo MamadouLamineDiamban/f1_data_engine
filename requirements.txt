@@ -1,0 +1,6 @@
+pandas
+fastf1
+requests
+python-dotenv
+pyarrow
+jupyter
