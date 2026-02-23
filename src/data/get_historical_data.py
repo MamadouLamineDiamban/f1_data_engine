@@ -12,15 +12,14 @@ def fetch_page(endpoint, limit=100, offset=0, retries=5):
     
     for attempt in range(retries):
         try:
-            # Pause de courtoisie
+            # Rate limiting delay
             time.sleep(0.8) 
             
             response = requests.get(url, timeout=20)
             
-            # Gestion du Rate Limiting (Error 429)
             if response.status_code == 429:
                 wait_time = (attempt + 1) * 10
-                print(f"[429] Limite atteinte. Attente de {wait_time}s...")
+                print(f"[429] Rate limit reached. Waiting {wait_time}s...")
                 time.sleep(wait_time)
                 continue
                 
@@ -29,7 +28,7 @@ def fetch_page(endpoint, limit=100, offset=0, retries=5):
             
         except requests.exceptions.RequestException as e:
             wait = (attempt + 1) * 2
-            print(f"Tentative {attempt + 1}/{retries} échouée ({e}). Attente {wait}s...")
+            print(f"Attempt {attempt + 1}/{retries} failed ({e}). Waiting {wait}s...")
             time.sleep(wait)
             
     return None
@@ -60,7 +59,7 @@ def get_all(endpoint):
     while True:
         data = fetch_page(endpoint, limit, offset)
         if not data:
-            print(f"Arret critique pendant la collecte de {endpoint}")
+            print(f"Critical error during collection of {endpoint}")
             break
             
         mr_data = data['MRData']
@@ -91,8 +90,8 @@ def get_all(endpoint):
 
 def save_raw_json(data, resource_path):
     """
-    Sauvegarde les données au format JSON dans data/raw/.
-    Gère la création de sous-dossiers (ex: results/1950.json).
+    Saves data in JSON format to RAW_DATA_DIR.
+    Handles subdirectory creation (e.g., results/1950.json).
     """
     file_path = RAW_DATA_DIR / f"{resource_path}.json"
     
@@ -107,42 +106,40 @@ def save_raw_json(data, resource_path):
 
 def run_main_ingestion():
     """
-    Execute le pipeline complet d'ingestion historique.
+    Executes the full historical ingestion pipeline.
     """
-    # 1. Ressources globales
-    print("=== Phase 1 : Donnees de reference ===")
+    # 1. Global reference data
+    print("=== Phase 1: Reference Data ===")
     global_targets = ["drivers", "constructors", "circuits", "seasons"]
     for target in global_targets:
         if not (RAW_DATA_DIR / f"{target}.json").exists():
             data = get_all(target)
             save_raw_json(data, target)
         else:
-            print(f"{target} deja present, passage au suivant.")
+            print(f"{target} already exists, skipping.")
 
-    # 2. Ressources granulaires
-    print("\n=== Phase 2 : Resultats et classements (saison par saison) ===")
+    # 2. Granular resources (Season by season)
+    print("\n=== Phase 2: Results and Standings (Per Season) ===")
     
-    # On charge les saisons pour boucler dessus
     with open(RAW_DATA_DIR / "seasons.json", "r") as f:
         seasons = json.load(f)
         years = [s['season'] for s in seasons]
 
-    for year in sorted(years, reverse=True): # On commence par les plus recentes
-        # Ingestion des resultats de l'annee
+    for year in sorted(years, reverse=True):
         res_path = f"results/results_{year}"
         if not (RAW_DATA_DIR / f"{res_path}.json").exists():
-            print(f"\nSaison {year}...")
-            # Resultats
+            print(f"\nSeason {year}...")
+            # Results
             results = get_all(f"{year}/results")
             save_raw_json(results, res_path)
-            # Standings Pilotes
+            # Driver Standings
             standings = get_all(f"{year}/driverstandings")
             save_raw_json(standings, f"standings/drivers_{year}")
             
-            # Pause de securite entre saisons
+            # Cooldown between seasons
             time.sleep(2)
         else:
-            print(f"Saison {year} deja archivee.")
+            print(f"Season {year} already archived.")
 
 if __name__ == "__main__":
     run_main_ingestion()
