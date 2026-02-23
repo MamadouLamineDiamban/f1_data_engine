@@ -833,7 +833,6 @@ all_streaks.sort_values('longest_win_streak', ascending=False).head(15)[
 race_results = df[df['position'].notna() & (df['position'] > 0)].copy()
 race_ids = ['season', 'round', 'constructor_name']
 
-# Self-join to get all driver pairs in the same race & team
 pairs = race_results.merge(
     race_results[race_ids + ['driver_fullname', 'position']],
     on=race_ids, suffixes=('_a', '_b')
@@ -842,60 +841,44 @@ pairs = pairs[pairs['driver_fullname_a'] < pairs['driver_fullname_b']].copy()
 pairs['a_won'] = pairs['position_a'] < pairs['position_b']
 
 htm = pairs.groupby(['driver_fullname_a', 'driver_fullname_b']).agg(
-    races   = ('a_won', 'count'),
-    a_wins  = ('a_won', 'sum'),
+    races  = ('a_won', 'count'),
+    a_wins = ('a_won', 'sum'),
 ).reset_index()
-htm['b_wins']     = htm['races'] - htm['a_wins']
-htm['a_win_pct']  = (htm['a_wins'] / htm['races'] * 100).round(1)
-htm['label']      = htm['driver_fullname_a'] + '  vs  ' + htm['driver_fullname_b']
-
-# ---- KEY FILTER: both drivers must be genuine GP winners (3+ wins) ----
-# This eliminates junior/development teammates (e.g. Tsunoda, Gasly at AlphaTauri)
-# and ensures we only see duels between drivers who could realistically win races.
-career_wins = df[df['is_win']].groupby('driver_fullname')['is_win'].sum()
-winners_3plus = set(career_wins[career_wins >= 3].index)
-
-htm_sig = htm[
-    (htm['races'] >= 15) &                              # min 15 shared races
-    (htm['driver_fullname_a'].isin(winners_3plus)) &    # both must have won
-    (htm['driver_fullname_b'].isin(winners_3plus))
-].copy()
-
-htm_sig['dominance'] = htm_sig['a_win_pct'].apply(lambda x: x if x >= 50 else 100 - x)
-htm_sig['gap_from_50'] = (htm_sig['a_win_pct'] - 50).abs().round(1)
-htm_sig['dominant_driver'] = htm_sig.apply(
+htm['b_wins'] = htm['races'] - htm['a_wins']
+htm['a_win_pct'] = (htm['a_wins'] / htm['races'] * 100).round(1)
+htm['gap_from_50'] = (htm['a_win_pct'] - 50).abs().round(1)
+htm['label'] = htm['driver_fullname_a'] + '  vs  ' + htm['driver_fullname_b']
+htm['dominant_driver'] = htm.apply(
     lambda r: r['driver_fullname_a'] if r['a_wins'] >= r['b_wins'] else r['driver_fullname_b'], axis=1
 )
 
-print(f"Genuine competitive rivalries found: {len(htm_sig)}")
+# ---- CHART: only truly contested duels ----
+# Rule: min 10 shared races AND the dominant driver wins at most 65% (gap <= 15)
+# This eliminates one-sided pairings like Verstappen/Tsunoda (95%), Verstappen/Gasly (92%)
+contested = htm[(htm['races'] >= 10) & (htm['gap_from_50'] <= 15)].sort_values('gap_from_50')
 
-# Chart 12a — Only truly contested rivalries: dominant driver wins max 65% of H2Hs
-# gap_from_50 <= 15 means the split is between 35/65 and 50/50
-truly_contested = htm_sig[htm_sig['gap_from_50'] <= 15].sort_values('gap_from_50')
-
-print(f"Truly contested rivalries (max 65/35 split): {len(truly_contested)}")
+print(f"Truly contested teammate rivalries (max 65/35 split, min 10 races): {len(contested)}")
 
 fig = px.bar(
-    truly_contested.sort_values('gap_from_50', ascending=False),
+    contested.head(25).sort_values('gap_from_50', ascending=False),
     x='a_win_pct', y='label', orientation='h',
     color='gap_from_50', color_continuous_scale='RdYlGn_r',
     hover_data=['races', 'a_wins', 'b_wins', 'dominant_driver'],
-    title='Most Closely Contested Teammate Rivalries<br><sup>Only duels where neither driver dominates above 65% — Min. 15 shared races, both with 3+ career wins</sup>',
-    labels={'a_win_pct': 'Win % — Driver A (alphabetical)', 'label': '', 'gap_from_50': 'Gap from 50/50'},
+    title='Most Closely Contested Teammate Rivalries<br><sup>Only duels with max 65/35 split — Min. 10 shared races</sup>',
+    labels={'a_win_pct': 'Win % (Driver A alphabetical)', 'label': '', 'gap_from_50': 'Gap from 50/50'},
     range_color=[0, 15]
 )
 fig.add_vline(x=50, line_dash='dash', line_color='white',
               annotation_text='50 / 50', annotation_position='top',
               annotation_font_color='white')
 fig.update_coloraxes(colorbar_title='Gap from 50%')
-fig.update_layout(height=max(400, len(truly_contested) * 35))
+fig.update_layout(height=max(500, min(len(contested), 25) * 32))
 fig.show()
 
-# Table — all competitive rivalries sorted by closeness
-htm_sig.sort_values('gap_from_50')[
-    ['label', 'races', 'a_wins', 'b_wins', 'a_win_pct', 'gap_from_50', 'dominant_driver']
-]
+# Table — full list of contested rivalries
+contested[['label', 'races', 'a_wins', 'b_wins', 'a_win_pct', 'gap_from_50', 'dominant_driver']]
 """))
+
 
     # ---------------------------------------------------------------------------
     # SECTION 13 — CHAMPIONSHIP BATTLES
