@@ -869,23 +869,26 @@ htm_sig['dominant_driver'] = htm_sig.apply(
 
 print(f"Genuine competitive rivalries found: {len(htm_sig)}")
 
-# Chart 12a — Most closely contested among genuine GP winners
-contested = htm_sig.sort_values('gap_from_50').head(20)
+# Chart 12a — Only truly contested rivalries: dominant driver wins max 65% of H2Hs
+# gap_from_50 <= 15 means the split is between 35/65 and 50/50
+truly_contested = htm_sig[htm_sig['gap_from_50'] <= 15].sort_values('gap_from_50')
+
+print(f"Truly contested rivalries (max 65/35 split): {len(truly_contested)}")
 
 fig = px.bar(
-    contested.sort_values('gap_from_50', ascending=False),
+    truly_contested.sort_values('gap_from_50', ascending=False),
     x='a_win_pct', y='label', orientation='h',
     color='gap_from_50', color_continuous_scale='RdYlGn_r',
-    hover_data=['races', 'a_wins', 'b_wins'],
-    title='Most Closely Contested Teammate Rivalries<br><sup>Only drivers with 3+ career wins — Min. 15 shared races</sup>',
+    hover_data=['races', 'a_wins', 'b_wins', 'dominant_driver'],
+    title='Most Closely Contested Teammate Rivalries<br><sup>Only duels where neither driver dominates above 65% — Min. 15 shared races, both with 3+ career wins</sup>',
     labels={'a_win_pct': 'Win % — Driver A (alphabetical)', 'label': '', 'gap_from_50': 'Gap from 50/50'},
-    range_color=[0, 30]
+    range_color=[0, 15]
 )
 fig.add_vline(x=50, line_dash='dash', line_color='white',
               annotation_text='50 / 50', annotation_position='top',
               annotation_font_color='white')
 fig.update_coloraxes(colorbar_title='Gap from 50%')
-fig.update_layout(height=700)
+fig.update_layout(height=max(400, len(truly_contested) * 35))
 fig.show()
 
 # Table — all competitive rivalries sorted by closeness
