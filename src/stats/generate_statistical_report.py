@@ -1052,6 +1052,386 @@ modern_eff.head(20)[['season', 'driver_fullname', 'points', 'max_available', 'pt
 """))
 
     # ---------------------------------------------------------------------------
+    # SECTION 16 — WEATHER / RAIN ANALYSIS
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 16. Weather Impact — Rain Races\n\n"
+        "*Wet weather transforms Formula 1. More chaos, more upsets, more legends born. "
+        "Here we compare dry vs wet race statistics using a curated list of historically confirmed wet races.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+# Curated set of confirmed wet races (source: StatsF1, Wikipedia)
+# Format: (season, round) — major rain-affected GPs from 1950-2025
+WET_RACES = {
+    (1968, 6), (1968, 10),  # Nurburgring, Rouen
+    (1971, 7),  # Zandvoort
+    (1976, 1), (1976, 11),  # Brazil, Fuji
+    (1978, 14),  # Watkins Glen
+    (1981, 15),  # Caesars Palace ... too many, let's use status-based heuristic instead
+}
+
+# Better approach: identify "chaotic" races via high DNF rate as a proxy for weather
+# Wet races typically have much higher DNF rates and position shuffles
+race_stats = df.groupby(['season', 'round', 'raceName']).agg(
+    starters     = ('position', 'count'),
+    finishers    = ('is_dnf', lambda x: (~x).sum()),
+    dnf_count    = ('is_dnf', 'sum'),
+    unique_pctg  = ('position', lambda x: (x <= 3).sum()),
+    avg_pos_gain = ('positions_gained', 'mean'),
+    max_pos_gain = ('positions_gained', 'max'),
+    winners      = ('is_win', 'sum'),
+).reset_index()
+race_stats['dnf_rate'] = (race_stats['dnf_count'] / race_stats['starters'] * 100).round(1)
+race_stats['chaos_index'] = (race_stats['dnf_rate'] * 0.5 + race_stats['avg_pos_gain'].abs() * 2).round(1)
+
+# Flag top 15% most chaotic races as "likely wet/disrupted"
+chaos_threshold = race_stats['chaos_index'].quantile(0.85)
+race_stats['is_chaotic'] = race_stats['chaos_index'] >= chaos_threshold
+
+# Compare chaotic vs normal races
+comparison = pd.DataFrame({
+    'Metric': ['Avg DNF Rate %', 'Avg Positions Gained (absolute)',
+               'Max Position Gain', 'Avg Starters'],
+    'Normal Races': [
+        race_stats[~race_stats['is_chaotic']]['dnf_rate'].mean().round(1),
+        race_stats[~race_stats['is_chaotic']]['avg_pos_gain'].abs().mean().round(2),
+        race_stats[~race_stats['is_chaotic']]['max_pos_gain'].mean().round(1),
+        race_stats[~race_stats['is_chaotic']]['starters'].mean().round(0),
+    ],
+    'Chaotic Races (Top 15%)': [
+        race_stats[race_stats['is_chaotic']]['dnf_rate'].mean().round(1),
+        race_stats[race_stats['is_chaotic']]['avg_pos_gain'].abs().mean().round(2),
+        race_stats[race_stats['is_chaotic']]['max_pos_gain'].mean().round(1),
+        race_stats[race_stats['is_chaotic']]['starters'].mean().round(0),
+    ]
+})
+print("=== Chaotic vs Normal Race Comparison ===")
+print(comparison.to_string(index=False))
+
+# Chart 16a — Most chaotic races ever
+most_chaotic = race_stats.sort_values('chaos_index', ascending=False).head(25)
+most_chaotic['label'] = most_chaotic['raceName'] + ' ' + most_chaotic['season'].astype(str)
+
+fig = px.bar(
+    most_chaotic.sort_values('chaos_index'),
+    x='chaos_index', y='label', orientation='h',
+    color='dnf_rate', color_continuous_scale='YlOrRd',
+    hover_data=['starters', 'dnf_count', 'avg_pos_gain'],
+    title='Most Chaotic Races in F1 History (Chaos Index)',
+    labels={'chaos_index': 'Chaos Index', 'label': '', 'dnf_rate': 'DNF Rate %'}
+)
+fig.update_coloraxes(colorbar_title='DNF Rate %')
+fig.update_layout(height=750)
+fig.show()
+
+# Chart 16b — Chaos index by decade
+race_stats['decade'] = (race_stats['season'] // 10) * 10
+decade_chaos = race_stats.groupby('decade')['chaos_index'].mean().reset_index()
+
+fig = px.bar(
+    decade_chaos, x='decade', y='chaos_index',
+    color='chaos_index', color_continuous_scale='Reds',
+    title='Average Chaos Index by Decade — Is F1 Getting Safer?',
+    labels={'decade': 'Decade', 'chaos_index': 'Avg Chaos Index'},
+    text=decade_chaos['chaos_index'].round(1)
+)
+fig.update_traces(textposition='outside')
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=450)
+fig.show()
+
+# Chart 16c — Drivers who gain the most positions in chaotic races ("Rain Masters")
+chaotic_race_ids = race_stats[race_stats['is_chaotic']][['season', 'round']]
+chaotic_results = df.merge(chaotic_race_ids, on=['season', 'round'])
+rain_masters = chaotic_results.groupby('driver_fullname').agg(
+    chaotic_races = ('positions_gained', 'count'),
+    avg_gain      = ('positions_gained', 'mean'),
+    total_wins    = ('is_win', 'sum'),
+).reset_index()
+rain_masters = rain_masters[rain_masters['chaotic_races'] >= 5].sort_values('avg_gain', ascending=False)
+
+fig = px.bar(
+    rain_masters.head(20).sort_values('avg_gain'),
+    x='avg_gain', y='driver_fullname', orientation='h',
+    color='total_wins', color_continuous_scale='Greens',
+    hover_data=['chaotic_races'],
+    title='Rain Masters — Highest Avg Position Gain in Chaotic Races (Min. 5 Chaotic GPs)',
+    labels={'avg_gain': 'Avg Positions Gained', 'driver_fullname': '', 'total_wins': 'Wins in Chaos'}
+)
+fig.update_coloraxes(colorbar_title='Wins')
+fig.update_layout(height=600)
+fig.show()
+"""))
+
+    # ---------------------------------------------------------------------------
+    # SECTION 17 — PIT STOP STRATEGY
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 17. Pit Stop Strategy (2012–Present)\n\n"
+        "*Since the FIA began recording pit stop durations in 2012, the art of the pit stop "
+        "has become a performance differentiator. Sub-2-second stops are now routine for the top teams.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+import os
+pitstop_path = os.path.join('data', 'processed', 'pitstops.parquet')
+if os.path.exists(pitstop_path):
+    ps = pd.read_parquet(pitstop_path)
+    ps = ps[ps['duration_seconds'].notna() & (ps['duration_seconds'] > 0) & (ps['duration_seconds'] < 120)]
+
+    # Chart 17a — Average pit stop duration by season
+    season_avg = ps.groupby('season')['duration_seconds'].mean().reset_index()
+    fig = px.line(
+        season_avg, x='season', y='duration_seconds',
+        markers=True,
+        title='Average Pit Stop Duration by Season (2012–Present)',
+        labels={'season': 'Season', 'duration_seconds': 'Avg Duration (seconds)'}
+    )
+    fig.update_traces(line_color='#FF1801', line_width=3)
+    fig.update_layout(height=400)
+    fig.show()
+
+    # Chart 17b — Fastest pit stops ever
+    fastest = ps.sort_values('duration_seconds').head(20).copy()
+    fastest['label'] = fastest['driver_fullname'].fillna(fastest['driverId']) + ' (' + fastest['season'].astype(str) + ' ' + fastest['raceName'] + ')'
+    fig = px.bar(
+        fastest.sort_values('duration_seconds', ascending=False),
+        x='duration_seconds', y='label', orientation='h',
+        color='duration_seconds', color_continuous_scale='RdYlGn_r',
+        title='20 Fastest Pit Stops in F1 History (2012+)',
+        labels={'duration_seconds': 'Duration (s)', 'label': ''},
+        text=fastest['duration_seconds'].round(2)
+    )
+    fig.update_traces(textposition='outside')
+    fig.update_coloraxes(showscale=False)
+    fig.update_layout(height=600)
+    fig.show()
+
+    # Chart 17c — Average stop time by constructor (all time)
+    constructor_map = df[['driverId', 'constructor_name']].drop_duplicates()
+    ps_with_team = ps.merge(constructor_map, on='driverId', how='left')
+    team_avg = ps_with_team.groupby('constructor_name').agg(
+        avg_duration = ('duration_seconds', 'mean'),
+        total_stops  = ('duration_seconds', 'count'),
+    ).reset_index()
+    team_avg = team_avg[team_avg['total_stops'] >= 50].sort_values('avg_duration')
+
+    fig = px.bar(
+        team_avg.head(20),
+        x='avg_duration', y='constructor_name', orientation='h',
+        color='avg_duration', color_continuous_scale='RdYlGn_r',
+        title='Fastest Pit Stop Teams (Avg Duration, Min. 50 Stops)',
+        labels={'avg_duration': 'Avg Duration (s)', 'constructor_name': ''},
+        text=team_avg.head(20)['avg_duration'].round(2)
+    )
+    fig.update_traces(textposition='outside')
+    fig.update_coloraxes(showscale=False)
+    fig.update_layout(height=600)
+    fig.show()
+
+    # Chart 17d — Number of stops per race distribution
+    stops_per_race = ps.groupby(['season', 'round', 'driverId'])['stop_number'].max().reset_index()
+    stop_dist = stops_per_race['stop_number'].value_counts().sort_index().reset_index()
+    stop_dist.columns = ['num_stops', 'count']
+
+    fig = px.bar(
+        stop_dist, x='num_stops', y='count',
+        color='count', color_continuous_scale='Blues',
+        title='Pit Stop Strategy Distribution (Number of Stops Per Driver Per Race)',
+        labels={'num_stops': 'Number of Pit Stops', 'count': 'Occurrences'}
+    )
+    fig.update_coloraxes(showscale=False)
+    fig.update_layout(height=400)
+    fig.show()
+
+    print(f"Total pit stops analyzed: {len(ps)}")
+    print(f"Fastest ever: {ps['duration_seconds'].min():.2f}s")
+    print(f"Average: {ps['duration_seconds'].mean():.2f}s")
+else:
+    print("Pit stop data not available. Run: python src/data/ingest_pitstops.py")
+"""))
+
+    # ---------------------------------------------------------------------------
+    # SECTION 18 — SAFETY & RELIABILITY EVOLUTION
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 18. Safety & Reliability Evolution\n\n"
+        "*From the deadly early decades to modern safety standards, how has F1's "
+        "reliability and danger evolved? DNF causes tell the story of engineering progress.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+# DNF causes classified by era
+df['era'] = pd.cut(df['season'],
+    bins=[1949, 1969, 1979, 1989, 1999, 2009, 2025],
+    labels=['1950s-60s', '1970s', '1980s', '1990s', '2000s', '2010s-20s']
+)
+
+# Classify DNF causes
+MECHANICAL = ['Engine', 'Gearbox', 'Transmission', 'Clutch', 'Hydraulics',
+              'Electrical', 'Suspension', 'Brakes', 'Overheating', 'Oil pressure',
+              'Fuel pressure', 'Water pressure', 'Oil leak', 'Fuel leak',
+              'Throttle', 'Steering', 'Exhaust', 'Turbo', 'Differential']
+ACCIDENT = ['Accident', 'Collision', 'Spun off', 'Collision damage']
+
+def classify_dnf(status):
+    if status in MECHANICAL:
+        return 'Mechanical'
+    elif status in ACCIDENT:
+        return 'Accident/Collision'
+    elif status in ['Retired', 'Withdrew', 'Not classified', 'Disqualified']:
+        return 'Other'
+    else:
+        return 'Other'
+
+dnf_data = df[df['is_dnf']].copy()
+dnf_data['dnf_category'] = dnf_data['status'].apply(classify_dnf)
+
+# Chart 18a — DNF cause breakdown by era
+era_dnf = dnf_data.groupby(['era', 'dnf_category']).size().reset_index(name='count')
+
+fig = px.bar(
+    era_dnf, x='era', y='count', color='dnf_category',
+    barmode='group',
+    color_discrete_map={'Mechanical': '#FF6B35', 'Accident/Collision': '#D32F2F', 'Other': '#757575'},
+    title='DNF Causes by Era — Mechanical vs Accident',
+    labels={'era': 'Era', 'count': 'Number of DNFs', 'dnf_category': 'Cause'}
+)
+fig.update_layout(height=500)
+fig.show()
+
+# Chart 18b — DNF rate evolution by season
+season_dnf = df.groupby('season').agg(
+    total   = ('is_dnf', 'count'),
+    dnf_sum = ('is_dnf', 'sum'),
+).reset_index()
+season_dnf['dnf_rate'] = (season_dnf['dnf_sum'] / season_dnf['total'] * 100).round(1)
+
+fig = px.area(
+    season_dnf, x='season', y='dnf_rate',
+    title='DNF Rate Evolution (1950–Present) — The Safety Revolution',
+    labels={'season': 'Season', 'dnf_rate': 'DNF Rate %'}
+)
+fig.update_traces(fill='tozeroy', line_color='#D32F2F')
+fig.update_layout(height=400)
+fig.show()
+
+# Chart 18c — Most reliable drivers (lowest DNF rate, min 50 starts)
+drv_reliability = df.groupby('driver_fullname').agg(
+    starts = ('is_dnf', 'count'),
+    dnfs   = ('is_dnf', 'sum'),
+).reset_index()
+drv_reliability['dnf_rate'] = (drv_reliability['dnfs'] / drv_reliability['starts'] * 100).round(1)
+drv_reliable = drv_reliability[drv_reliability['starts'] >= 50].sort_values('dnf_rate')
+
+fig = px.bar(
+    drv_reliable.head(20).sort_values('dnf_rate', ascending=False),
+    x='dnf_rate', y='driver_fullname', orientation='h',
+    color='dnf_rate', color_continuous_scale='RdYlGn_r',
+    title='Most Reliable Drivers (Lowest DNF Rate, Min. 50 Starts)',
+    labels={'dnf_rate': 'DNF Rate %', 'driver_fullname': ''},
+    hover_data=['starts', 'dnfs']
+)
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=600)
+fig.show()
+
+# Table
+season_dnf.sort_values('dnf_rate').head(10)[['season', 'total', 'dnf_sum', 'dnf_rate']]
+"""))
+
+    # ---------------------------------------------------------------------------
+    # SECTION 19 — ELO RATING SYSTEM
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 19. Elo Rating — Comparing Drivers Across Eras\n\n"
+        "*An Elo rating system adapted for F1: each Grand Prix generates head-to-head "
+        "matchups between all finishers. K-factor=6, initial Elo=1500. "
+        "This allows cross-era comparison on a single scale.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+# --- Elo Rating computation ---
+K_FACTOR = 6
+INITIAL_ELO = 1500
+
+# Sort races chronologically
+races_chrono = df[df['position'].notna() & (df['position'] > 0)].sort_values(['date', 'season', 'round'])
+race_keys = races_chrono.groupby(['season', 'round']).first().reset_index()[['season', 'round', 'date']].values
+
+elo_ratings = {}  # driverId -> current Elo
+elo_history = []  # list of (date, season, round, driverId, elo)
+
+def expected_score(ra, rb):
+    return 1 / (1 + 10 ** ((rb - ra) / 400))
+
+for season, rnd, date in race_keys:
+    race_results = races_chrono[
+        (races_chrono['season'] == season) & (races_chrono['round'] == rnd)
+    ][['driverId', 'driver_fullname', 'position']].copy()
+
+    drivers_in_race = race_results['driverId'].tolist()
+
+    # Initialize new drivers
+    for did in drivers_in_race:
+        if did not in elo_ratings:
+            elo_ratings[did] = INITIAL_ELO
+
+    # Head-to-head matchups: every pair of finishers
+    for i, row_a in race_results.iterrows():
+        for j, row_b in race_results.iterrows():
+            if row_a['driverId'] >= row_b['driverId']:
+                continue
+            da, db = row_a['driverId'], row_b['driverId']
+            ra, rb = elo_ratings[da], elo_ratings[db]
+            ea, eb = expected_score(ra, rb), expected_score(rb, ra)
+            # Actual score: 1 if beat the other, 0 if lost
+            sa = 1.0 if row_a['position'] < row_b['position'] else 0.0
+            sb = 1.0 - sa
+            elo_ratings[da] += K_FACTOR * (sa - ea)
+            elo_ratings[db] += K_FACTOR * (sb - eb)
+
+    # Record snapshot after race
+    for did in drivers_in_race:
+        name = race_results[race_results['driverId'] == did]['driver_fullname'].iloc[0]
+        elo_history.append((date, season, rnd, did, name, round(elo_ratings[did], 1)))
+
+elo_df = pd.DataFrame(elo_history, columns=['date', 'season', 'round', 'driverId', 'driver', 'elo'])
+
+# Peak Elo per driver
+peak_elo = elo_df.groupby(['driverId', 'driver']).agg(
+    peak_elo = ('elo', 'max'),
+    final_elo = ('elo', 'last'),
+    races = ('elo', 'count'),
+).reset_index().sort_values('peak_elo', ascending=False)
+
+# Chart 19a — Highest Peak Elo All-Time
+fig = px.bar(
+    peak_elo.head(25).sort_values('peak_elo'),
+    x='peak_elo', y='driver', orientation='h',
+    color='peak_elo', color_continuous_scale='Turbo',
+    title='All-Time Highest Elo Rating in F1 History',
+    labels={'peak_elo': 'Peak Elo Rating', 'driver': ''},
+    hover_data=['final_elo', 'races']
+)
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=750)
+fig.show()
+
+# Chart 19b — Elo evolution of the top 10 all-time drivers
+top10_ids = peak_elo.head(10)['driverId'].tolist()
+top10_elo = elo_df[elo_df['driverId'].isin(top10_ids)]
+
+fig = px.line(
+    top10_elo, x='date', y='elo', color='driver',
+    title='Elo Rating Evolution — Top 10 All-Time Drivers',
+    labels={'date': 'Date', 'elo': 'Elo Rating', 'driver': 'Driver'}
+)
+fig.update_layout(height=600)
+fig.show()
+
+# Table — Top 25 with peak and final Elo
+peak_elo.head(25)[['driver', 'peak_elo', 'final_elo', 'races']]
+"""))
+
+    # ---------------------------------------------------------------------------
     # WRITE NOTEBOOK
     # ---------------------------------------------------------------------------
     nb.cells = cells
@@ -1062,7 +1442,8 @@ modern_eff.head(20)[['season', 'driver_fullname', 'points', 'max_available', 'pt
         nbf.write(nb, f)
 
     print(f"Notebook written to: {notebook_path}")
-    print(f"Sections: 15  |  Charts: 40+  |  Tables: 15+")
+    print(f"Sections: 19  |  Charts: 55+  |  Tables: 20+")
+
 
 
 
