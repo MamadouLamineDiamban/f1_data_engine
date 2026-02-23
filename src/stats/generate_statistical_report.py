@@ -857,24 +857,33 @@ htm_sig['dominant_driver'] = htm_sig.apply(
     lambda r: r['driver_fullname_a'] if r['a_wins'] >= r['b_wins'] else r['driver_fullname_b'], axis=1
 )
 
-# Chart 12a — Most one-sided rivalries (min 10 races together)
-most_lopsided = htm_sig.sort_values('dominance', ascending=False).head(20)
+# ---- Closeness index: distance from perfect 50/50 ----
+# 0 = perfectly equal, 50 = total one-sided domination
+htm_sig['gap_from_50'] = (htm_sig['a_win_pct'] - 50).abs().round(1)
+
+# Chart 12a — Most closely contested rivalries (min 20 shared races — narratively significant)
+contested = htm_sig[htm_sig['races'] >= 20].sort_values('gap_from_50').head(20)
+contested['balance_bar'] = 100 - contested['gap_from_50']   # higher = more balanced
+
 fig = px.bar(
-    most_lopsided.sort_values('dominance'),
-    x='dominance', y='label', orientation='h',
-    color='dominance', color_continuous_scale='RdYlGn',
+    contested.sort_values('gap_from_50', ascending=False),
+    x='a_win_pct', y='label', orientation='h',
+    color='gap_from_50', color_continuous_scale='RdYlGn_r',
     hover_data=['races', 'a_wins', 'b_wins'],
-    title='Most One-Sided Teammate Battles (Min. 10 Shared Races)',
-    labels={'dominance': 'Win % of Dominant Driver', 'label': ''}
+    title='Most Closely Contested Teammate Rivalries (Min. 20 Shared Races)',
+    labels={'a_win_pct': f'Win % — Driver A', 'label': '', 'gap_from_50': 'Gap from 50/50'},
+    range_color=[0, 30]
 )
-fig.add_vline(x=50, line_dash='dash', line_color='white', opacity=0.3)
-fig.update_coloraxes(showscale=False)
+fig.add_vline(x=50, line_dash='dash', line_color='white',
+              annotation_text='50 / 50', annotation_position='top',
+              annotation_font_color='white')
+fig.update_coloraxes(colorbar_title='Gap from 50%')
 fig.update_layout(height=700)
 fig.show()
 
-# Table — All significant rivalries sorted by dominance
-htm_display = htm_sig.sort_values('dominance', ascending=False).head(25)
-htm_display[['label', 'races', 'a_wins', 'b_wins', 'a_win_pct', 'dominant_driver']]
+# Table — Top 25 most contested (sorted by gap from 50)
+htm_display = htm_sig[htm_sig['races'] >= 10].sort_values('gap_from_50').head(25)
+htm_display[['label', 'races', 'a_wins', 'b_wins', 'a_win_pct', 'gap_from_50', 'dominant_driver']]
 """))
 
     # ---------------------------------------------------------------------------
