@@ -1432,6 +1432,68 @@ peak_elo.head(25)[['driver', 'peak_elo', 'final_elo', 'races']]
 """))
 
     # ---------------------------------------------------------------------------
+    # SECTION 20 — TELEMETRY COMPARISON
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 20. Telemetry Analysis — Corner-by-Corner Performance\n\n"
+        "*Compare the physics of the fastest laps. This section uses high-frequency sensor data "
+        "(Speed, Throttle, Brake) to see exactly where one driver gains or loses time against another.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+from src.features.telemetry import TelemetryAnalyzer
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Example: Abu Dhabi 2021 Qualifying - Verstappen vs Hamilton
+YEAR = 2021
+ROUND = 22
+SESSION = 'Q'
+DRIVER_A = 'VER'
+DRIVER_B = 'HAM'
+
+try:
+    analyzer = TelemetryAnalyzer(YEAR, ROUND, SESSION)
+    comparison = analyzer.compare_drivers(DRIVER_A, DRIVER_B)
+
+    if comparison:
+        tel_a = comparison[DRIVER_A]['telemetry']
+        tel_b = comparison[DRIVER_B]['telemetry']
+        
+        # Create subplots for Speed, Throttle, and Brake
+        fig = make_subplots(
+            rows=3, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.05,
+            subplot_titles=('Speed (km/h)', 'Throttle %', 'Brake Status'),
+            row_heights=[0.5, 0.25, 0.25]
+        )
+
+        # Speed Trace
+        fig.add_trace(go.Scatter(x=tel_a['Distance'], y=tel_a['Speed'], name=DRIVER_A, line=dict(color='blue')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=tel_b['Distance'], y=tel_b['Speed'], name=DRIVER_B, line=dict(color='silver')), row=1, col=1)
+
+        # Throttle Trace
+        fig.add_trace(go.Scatter(x=tel_a['Distance'], y=tel_a['Throttle'], name=DRIVER_A, line=dict(color='blue'), showlegend=False), row=2, col=1)
+        fig.add_trace(go.Scatter(x=tel_b['Distance'], y=tel_b['Throttle'], name=DRIVER_B, line=dict(color='silver'), showlegend=False), row=2, col=1)
+
+        # Brake Trace
+        fig.add_trace(go.Scatter(x=tel_a['Distance'], y=tel_a['Brake'].astype(int), name=DRIVER_A, line=dict(color='blue'), showlegend=False), row=3, col=1)
+        fig.add_trace(go.Scatter(x=tel_b['Distance'], y=tel_b['Brake'].astype(int), name=DRIVER_B, line=dict(color='silver'), showlegend=False), row=3, col=1)
+
+        fig.update_layout(
+            height=800, 
+            title_text=f"Telemetry Comparison: {DRIVER_A} vs {DRIVER_B} — {YEAR} {analyzer.session.event['EventName']} ({SESSION})",
+            template='plotly_dark'
+        )
+        fig.update_xaxes(title_text="Distance (m)", row=3, col=1)
+        fig.show()
+    else:
+        print(f"Could not load telemetry for {DRIVER_A} or {DRIVER_B}")
+except Exception as e:
+    print(f"Error generating telemetry: {e}")
+"""))
+
+    # ---------------------------------------------------------------------------
     # WRITE NOTEBOOK
     # ---------------------------------------------------------------------------
     nb.cells = cells
