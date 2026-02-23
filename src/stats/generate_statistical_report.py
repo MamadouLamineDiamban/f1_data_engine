@@ -742,6 +742,313 @@ fig.show()
 """))
 
     # ---------------------------------------------------------------------------
+    # SECTION 11 — CONSECUTIVE STREAKS
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 11. Consecutive Streaks\n\n"
+        "*The longest uninterrupted runs of elite performance — the hardest records to match.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+# Sort chronologically
+df_sorted = df.sort_values(['driver_fullname', 'date']).copy()
+
+def longest_streak(series):
+    # Compute the longest consecutive True run in a boolean series
+    max_streak = streak = 0
+    for val in series:
+        if val:
+            streak += 1
+            max_streak = max(max_streak, streak)
+        else:
+            streak = 0
+    return max_streak
+
+# Win streaks
+win_streaks = df_sorted.groupby('driver_fullname')['is_win'].apply(longest_streak).reset_index()
+win_streaks.columns = ['driver', 'longest_win_streak']
+
+# Podium streaks
+pod_streaks = df_sorted.groupby('driver_fullname')['on_podium'].apply(longest_streak).reset_index()
+pod_streaks.columns = ['driver', 'longest_podium_streak']
+
+# Points streaks (top-10)
+pts_streaks = df_sorted.groupby('driver_fullname')['in_points'].apply(longest_streak).reset_index()
+pts_streaks.columns = ['driver', 'longest_points_streak']
+
+# Merge
+all_streaks = win_streaks.merge(pod_streaks, on='driver').merge(pts_streaks, on='driver')
+all_streaks = all_streaks.merge(drv[['driver', 'entries']], on='driver')
+
+# Chart 11a — Longest win streaks
+fig = px.bar(
+    all_streaks.sort_values('longest_win_streak', ascending=False).head(15).sort_values('longest_win_streak'),
+    x='longest_win_streak', y='driver', orientation='h',
+    color='longest_win_streak', color_continuous_scale='Reds',
+    title='Longest Consecutive Win Streaks',
+    labels={'longest_win_streak': 'Consecutive Wins', 'driver': ''}
+)
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=500)
+fig.show()
+
+# Chart 11b — Longest podium streaks
+fig = px.bar(
+    all_streaks.sort_values('longest_podium_streak', ascending=False).head(15).sort_values('longest_podium_streak'),
+    x='longest_podium_streak', y='driver', orientation='h',
+    color='longest_podium_streak', color_continuous_scale='RdYlGn',
+    title='Longest Consecutive Podium Streaks',
+    labels={'longest_podium_streak': 'Consecutive Podiums', 'driver': ''}
+)
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=500)
+fig.show()
+
+# Chart 11c — Longest points streaks (top-10 finishes)
+fig = px.bar(
+    all_streaks.sort_values('longest_points_streak', ascending=False).head(15).sort_values('longest_points_streak'),
+    x='longest_points_streak', y='driver', orientation='h',
+    color='longest_points_streak', color_continuous_scale='Blues',
+    title='Longest Consecutive Points Finish Streaks (Top-10)',
+    labels={'longest_points_streak': 'Consecutive Points Finishes', 'driver': ''}
+)
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=500)
+fig.show()
+
+all_streaks.sort_values('longest_win_streak', ascending=False).head(15)[
+    ['driver', 'entries', 'longest_win_streak', 'longest_podium_streak', 'longest_points_streak']
+]
+"""))
+
+    # ---------------------------------------------------------------------------
+    # SECTION 12 — TEAMMATE HEAD-TO-HEAD
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 12. Teammate Head-to-Head\n\n"
+        "*Within the same team and same race, who beats their teammate most consistently? "
+        "The purest measure of driver quality, removing the car variable.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+# Build teammate pairings per race
+race_results = df[df['position'].notna() & (df['position'] > 0)].copy()
+race_ids = ['season', 'round', 'constructor_name']
+
+# Self-join to get all driver pairs in the same race & team
+pairs = race_results.merge(
+    race_results[race_ids + ['driver_fullname', 'position']],
+    on=race_ids, suffixes=('_a', '_b')
+)
+# Keep only pairs where driver A beats driver B (avoids duplicates and self-match)
+pairs = pairs[pairs['driver_fullname_a'] < pairs['driver_fullname_b']].copy()
+pairs['a_won'] = pairs['position_a'] < pairs['position_b']
+
+htm = pairs.groupby(['driver_fullname_a', 'driver_fullname_b']).agg(
+    races = ('a_won', 'count'),
+    a_wins = ('a_won', 'sum'),
+).reset_index()
+htm['b_wins'] = htm['races'] - htm['a_wins']
+htm['a_win_pct'] = (htm['a_wins'] / htm['races'] * 100).round(1)
+htm['label'] = htm['driver_fullname_a'] + '  vs  ' + htm['driver_fullname_b']
+
+# Only pairs with 10+ shared races for statistical relevance
+htm_sig = htm[htm['races'] >= 10].copy()
+htm_sig['dominance'] = htm_sig['a_win_pct'].apply(lambda x: x if x >= 50 else 100 - x)
+htm_sig['dominant_driver'] = htm_sig.apply(
+    lambda r: r['driver_fullname_a'] if r['a_wins'] >= r['b_wins'] else r['driver_fullname_b'], axis=1
+)
+
+# Chart 12a — Most one-sided rivalries (min 10 races together)
+most_lopsided = htm_sig.sort_values('dominance', ascending=False).head(20)
+fig = px.bar(
+    most_lopsided.sort_values('dominance'),
+    x='dominance', y='label', orientation='h',
+    color='dominance', color_continuous_scale='RdYlGn',
+    hover_data=['races', 'a_wins', 'b_wins'],
+    title='Most One-Sided Teammate Battles (Min. 10 Shared Races)',
+    labels={'dominance': 'Win % of Dominant Driver', 'label': ''}
+)
+fig.add_vline(x=50, line_dash='dash', line_color='white', opacity=0.3)
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=700)
+fig.show()
+
+# Table — All significant rivalries sorted by dominance
+htm_display = htm_sig.sort_values('dominance', ascending=False).head(25)
+htm_display[['label', 'races', 'a_wins', 'b_wins', 'a_win_pct', 'dominant_driver']]
+"""))
+
+    # ---------------------------------------------------------------------------
+    # SECTION 13 — CHAMPIONSHIP BATTLES
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 13. Season Championship Battles\n\n"
+        "*How close were the title fights? Seasons decided by the narrowest margins.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+# Season-end standings: total points per driver per season
+season_pts = df.groupby(['season', 'driver_fullname'])['points'].sum().reset_index()
+season_pts = season_pts.sort_values(['season', 'points'], ascending=[True, False])
+
+# Top-2 per season
+top2 = season_pts.groupby('season').head(2).groupby('season').agg(
+    champion = ('driver_fullname', 'first'),
+    runner_up = ('driver_fullname', lambda x: x.iloc[1] if len(x) > 1 else 'N/A'),
+    champion_pts = ('points', 'first'),
+    runner_up_pts = ('points', lambda x: x.iloc[1] if len(x) > 1 else 0),
+).reset_index()
+top2['gap_pts'] = top2['champion_pts'] - top2['runner_up_pts']
+top2 = top2.sort_values('gap_pts')
+
+# Chart 13a — Narrowest title fights
+fig = px.bar(
+    top2.head(20).sort_values('gap_pts', ascending=False),
+    x='gap_pts', y='season', orientation='h',
+    color='gap_pts', color_continuous_scale='RdYlGn',
+    hover_data=['champion', 'runner_up', 'champion_pts', 'runner_up_pts'],
+    title='Narrowest Championship Battles (Smallest Points Gap, Top-20)',
+    labels={'gap_pts': 'Points Gap (Champion - Runner-Up)', 'season': 'Season'},
+    text='gap_pts'
+)
+fig.update_traces(textposition='outside')
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=700)
+fig.show()
+
+# Chart 13b — Most dominant seasons (largest gap)
+fig = px.bar(
+    top2.sort_values('gap_pts', ascending=False).head(20).sort_values('gap_pts'),
+    x='gap_pts', y='season', orientation='h',
+    color='gap_pts', color_continuous_scale='Reds',
+    hover_data=['champion', 'runner_up'],
+    title='Most Dominant Championship Winning Margins (Top-20)',
+    labels={'gap_pts': 'Points Gap', 'season': 'Season'},
+    text=top2.sort_values('gap_pts', ascending=False).head(20)['champion']
+)
+fig.update_traces(textposition='outside')
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=700)
+fig.show()
+
+top2.head(20)[['season', 'champion', 'runner_up', 'champion_pts', 'runner_up_pts', 'gap_pts']]
+"""))
+
+    # ---------------------------------------------------------------------------
+    # SECTION 14 — CONSTRUCTOR 1-2 FINISHES
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 14. Constructor 1-2 Finishes\n\n"
+        "*When both cars finish first and second — the ultimate expression of team dominance.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+# Find races where a team scored positions 1 and 2
+pos_12 = df[df['position'].isin([1, 2])].copy()
+race_team_positions = pos_12.groupby(['season', 'round', 'constructor_name'])['position'].apply(set).reset_index()
+race_team_positions['is_oneTwo'] = race_team_positions['position'].apply(lambda s: {1, 2}.issubset(s))
+
+one_twos = race_team_positions[race_team_positions['is_oneTwo']]
+one_two_stats = one_twos.groupby('constructor_name').size().reset_index(name='one_two_count')
+one_two_stats = one_two_stats.sort_values('one_two_count', ascending=False)
+
+# Merge with total wins for context
+one_two_stats = one_two_stats.merge(const[['constructor', 'wins']], left_on='constructor_name', right_on='constructor', how='left')
+one_two_stats['one_two_pct_of_wins'] = (one_two_stats['one_two_count'] / one_two_stats['wins'] * 100).round(1)
+
+# Chart 14a — Most 1-2 finishes
+fig = px.bar(
+    one_two_stats.head(15).sort_values('one_two_count'),
+    x='one_two_count', y='constructor_name', orientation='h',
+    color='one_two_count', color_continuous_scale='Blues',
+    title='Constructor 1-2 Finishes — All Time',
+    labels={'one_two_count': 'Number of 1-2s', 'constructor_name': ''},
+    text='one_two_count'
+)
+fig.update_traces(textposition='outside')
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=500)
+fig.show()
+
+# Season breakdown — most 1-2s in a single season
+season_onetwos = one_twos.groupby(['season', 'constructor_name']).size().reset_index(name='count')
+best_seasons = season_onetwos.sort_values('count', ascending=False).head(15)
+best_seasons['label'] = best_seasons['constructor_name'] + ' (' + best_seasons['season'].astype(str) + ')'
+
+fig = px.bar(
+    best_seasons.sort_values('count'),
+    x='count', y='label', orientation='h',
+    color='count', color_continuous_scale='Oranges',
+    title='Most 1-2 Finishes in a Single Season',
+    labels={'count': '1-2 Finishes', 'label': ''}
+)
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=550)
+fig.show()
+
+one_two_stats.head(15)[['constructor_name', 'one_two_count', 'wins', 'one_two_pct_of_wins']]
+"""))
+
+    # ---------------------------------------------------------------------------
+    # SECTION 15 — POINTS EFFICIENCY PER SEASON
+    # ---------------------------------------------------------------------------
+    cells.append(nbf.v4.new_markdown_cell(
+        "## 15. Points Efficiency Per Season\n\n"
+        "*Which driver extracted the highest percentage of the theoretically available points "
+        "in a given season? This caps the scoring at 25 pts/race × N races.*"
+    ))
+    cells.append(nbf.v4.new_code_cell(r"""
+# Max points per season (modern scoring: 25 pts/race max)
+# We use 26 as the max per race to account for the 1 bonus fastest lap point
+MAX_PTS_PER_RACE = 26
+
+gps_per_season_map = df.groupby('season')['round'].max().to_dict()
+
+season_pts_drv = df.groupby(['season', 'driver_fullname'])['points'].sum().reset_index()
+season_pts_drv['max_available'] = season_pts_drv['season'].map(gps_per_season_map) * MAX_PTS_PER_RACE
+season_pts_drv['pts_efficiency_%'] = (season_pts_drv['points'] / season_pts_drv['max_available'] * 100).round(2)
+
+# Only modern era (2010+) for comparability
+modern_eff = season_pts_drv[season_pts_drv['season'] >= 2010].sort_values('pts_efficiency_%', ascending=False)
+
+# Chart 15a — Most efficient seasons (modern era)
+top_eff = modern_eff.head(20).copy()
+top_eff['label'] = top_eff['driver_fullname'] + ' (' + top_eff['season'].astype(str) + ')'
+
+fig = px.bar(
+    top_eff.sort_values('pts_efficiency_%'),
+    x='pts_efficiency_%', y='label', orientation='h',
+    color='pts_efficiency_%', color_continuous_scale='RdYlGn',
+    title='Most Efficient Championship Seasons (2010–Present)',
+    labels={'pts_efficiency_%': 'Points Efficiency %', 'label': ''},
+    text=top_eff['pts_efficiency_%'].astype(str) + '%',
+    hover_data=['points', 'max_available']
+)
+fig.update_traces(textposition='outside')
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=700)
+fig.show()
+
+# Chart 15b — Average efficiency per driver (modern era, min 3 seasons)
+avg_eff = modern_eff.groupby('driver_fullname').agg(
+    avg_efficiency = ('pts_efficiency_%', 'mean'),
+    seasons = ('season', 'nunique'),
+    total_pts = ('points', 'sum')
+).reset_index()
+avg_eff_filtered = avg_eff[avg_eff['seasons'] >= 3].sort_values('avg_efficiency', ascending=False)
+
+fig = px.bar(
+    avg_eff_filtered.head(20).sort_values('avg_efficiency'),
+    x='avg_efficiency', y='driver_fullname', orientation='h',
+    color='avg_efficiency', color_continuous_scale='Blues',
+    title='Average Points Efficiency (Modern Era, Min. 3 Seasons)',
+    labels={'avg_efficiency': 'Avg Efficiency %', 'driver_fullname': ''}
+)
+fig.update_coloraxes(showscale=False)
+fig.update_layout(height=600)
+fig.show()
+
+modern_eff.head(20)[['season', 'driver_fullname', 'points', 'max_available', 'pts_efficiency_%']]
+"""))
+
+    # ---------------------------------------------------------------------------
     # WRITE NOTEBOOK
     # ---------------------------------------------------------------------------
     nb.cells = cells
@@ -752,7 +1059,8 @@ fig.show()
         nbf.write(nb, f)
 
     print(f"Notebook written to: {notebook_path}")
-    print(f"Sections: 10  |  Charts: 27+  |  Tables: 10+")
+    print(f"Sections: 15  |  Charts: 40+  |  Tables: 15+")
+
 
 
 if __name__ == "__main__":
