@@ -42,12 +42,24 @@ def generate_f1_statistical_report():
 import warnings
 warnings.filterwarnings('ignore')
 
+import sys
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from src.config import PROCESSED_DATA_DIR
+from pathlib import Path
+
+# -- Resolve the project root robustly regardless of kernel launch directory --
+# Walk up until we find a directory containing 'data/processed'
+_cwd = Path().resolve()
+_project_root = _cwd
+for _candidate in [_cwd] + list(_cwd.parents):
+    if (_candidate / 'data' / 'processed').exists():
+        _project_root = _candidate
+        break
+
+PROCESSED_DATA_DIR = _project_root / 'data' / 'processed'
 
 # ---- Visual constants ----
 TEMPLATE = "plotly_dark"
