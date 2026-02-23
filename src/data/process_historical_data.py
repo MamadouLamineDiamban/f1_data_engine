@@ -119,6 +119,7 @@ def process_results():
     df['season'] = df['season'].astype(int)
     df['round'] = df['round'].astype(int)
     df['points'] = df['points'].astype(float)
+    df['grid'] = pd.to_numeric(df['grid'], errors='coerce')
     df['position'] = pd.to_numeric(df['position'], errors='coerce')
     df['date'] = pd.to_datetime(df['date'])
     
